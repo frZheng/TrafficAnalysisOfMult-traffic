@@ -10,6 +10,8 @@ import scala.collection.mutable.ListBuffer
  * AP和AFC数据统计对比
  * 包括出行天数、出行次数、花费时间三部分对比
  * AFC:(292870821,2019-06-15 21:12:46,科学馆,2019-06-15 21:27:04,市民中心)
+ * -> (出行天数, 数量), (出行次数, 数量), (花费时间, 数量)
+ *
  * AP:(1C151FD38BD0,2019-06-19 22:56:37,老街,378,2019-06-19 23:31:22,下沙,121)
  */
 object AfcAndApContrast {
@@ -22,46 +24,13 @@ object AfcAndApContrast {
     var saveFilePath = "D:\\subwayData\\spark\\data\\zlt-hdfs\\UI\\zfr-AfcAndApContrast_n"
     var AfcTextFile = "D:\\subwayData\\spark\\data\\zlt-hdfs\\UI\\zfr-SampledAPData_n"
 
-    def deleteDir(dir: File): Unit = {
-      val files = dir.listFiles()
-        if(dir.exists()){
-        files.foreach(f => {
-          if (f.isDirectory) {
-            deleteDir(f)
-          } else {
-            f.delete()
-
-            println("delete file " + f.getAbsolutePath)
-          }
-        })
-        }
-      //dir.delete()
-      dir.deleteOnExit()
-      println("delete dir " + dir.getAbsolutePath)
-    }
-
     val file=new File(saveFilePath)
     val file2=new File(AfcTextFile)
-//    deleteDir(file)
-//
-//    if(file.mkdir()) {
-//      println("mkdir " + file.getAbsolutePath)
-//    }
-//    else{
-//      println("mkdir failed")
-//    }
-//    deleteDir(file2)
-//    if(file2.mkdir()) {
-//      println("mkdir " + file2.getAbsolutePath)
-//    }
-//    else{
-//      println("mkdir failed")
-//    }
-//    return
+
     // 读取深圳通卡数据
-    // textFile : (292870821,2019-06-15 21:12:46,科学馆,2019-06-15 21:27:04,市民中心)
+    // textFile : (667979926,2019-06-04 08:42:22,坪洲,21,2019-06-04 08:55:23,宝安中心,22)
     // subwayFile: (689414061,List((3947,6), (2746,8), (3859,14), (3425,14), (5364,16), (5269,22), (5330,23), (4078,25), (3823,27)))
-    // subwayFile: (id,list(时长,日期))
+    // subwayFile: (id,list((时长,日期), (时长,日期), ..., (时长,日期)))
     val subwayFile = sc.textFile(ApTextFile).map(line => {
       val fields = line.split(',')
       //println(fields(4))
@@ -75,13 +44,15 @@ object AfcAndApContrast {
 
     println("subwayFile",subwayFile.first())
 
-    // (id，(出行花费时间序列)，出行次数，出行天数)
-    // (689414061,List(3947, 2746, 3859, 3425, 5364, 5269, 5330, 4078, 3823),9,8)
+    // (id, ((dur, day), (dur, day), ..., (dur, day)))
+    // (689414061,List((3947,6), (2746,8), (3859,14), (3425,14), (5364,16), (5269,22), (5330,23), (4078,25), (3823,27)))
+    // (id, (durs list), 出行次数, 出行天数)
+    // => (689414061,List(3947, 2746, 3859, 3425, 5364, 5269, 5330, 4078, 3823),9,8)
     val processingAFC = subwayFile.map(line => {
       val daySets: mutable.Set[Int] = mutable.Set() // 可变集合, imutable.set() 不可变集合
       val durs = new ListBuffer[Long]
       line._2.foreach(x => { // x表示一行中的 (dur,day)列表
-        daySets.add(x._2) // 取subwayFile的 (dur,day)列表的天
+        daySets.add(x._2) // 取subwayFile的 (dur,day)列表的day
         durs.append(x._1) // 将坐车时间追加进
       })
       // (id，出行花费时间序列，出行次数，出行天数)
@@ -91,12 +62,15 @@ object AfcAndApContrast {
     println("processingAFC",processingAFC.first())
 
     // 统计出行片段的时间长度分布,120s为一个单位
-    // for循环中的 yield 会把当前的元素记下来，保存在集合中，循环结束后将返回该集合。如果被循环的是Map，返回的就是Map，以此类推。
+    // for循环中的 yield 会把当前的元素记下来，保存在集合(不去重)中，循环结束后将返回该集合。如果被循环的是Map，返回的就是Map，以此类推。
+    //  val a = Array(1, 2, 3, 4, 5, 4 ,5); for (e <- a if e > 2) yield e, 结果为 Array(3, 4, 5, 5, 4)
     // 每个id 的 出行花费时间, 次数
-    val travelTimeLengthAFC = processingAFC.flatMap(line => for (v <- line._2) yield (v / 120, 1)) // 出行花费时间序列一个个赋值给v
-      // reduceByKey会寻找相同key的数据，当找到这样的两条记录时会对其value(分别记为x,y)做(x,y) => x+y的处理，即只保留求和之后的数据作为value。反复执行这个操作直至每个key只留下一条记录。
-      .reduceByKey(_ + _) // reduceByKey((x,y) => x+y) == reduceByKey(_ + _)
-      .repartition(1)
+    // (id，出行花费时间序列，出行次数，出行天数) -> (出行花费时间/120,1) -> '出行花费时间/120,数量'
+    val travelTimeLengthAFC = processingAFC.flatMap(line => for (v <- line._2) yield (v / 120, 1))
+      // reduceByKey会寻找相同key的数据，当找到这样的两条记录时会对其value(分别记为x,y)做(x,y) => x+y的处理，
+      // 即只保留求和之后的数据作为value。反复执行这个操作直至每个key只留下一条记录。
+      .reduceByKey(_ + _) // reduceByKey((x,y) => x+y) == reduceByKey(_ + _),
+      .repartition(1) // 用coalesce代替
       .sortByKey()
       .map(x => x._1.toString + "," + x._2.toString)
 //     travelTimeLengthAFC.saveAsTextFile(saveFilePath + "/AFC-TimeLength")
@@ -125,7 +99,7 @@ object AfcAndApContrast {
       val dur = dt - ot
       val day = dayOfMonth_long(ot)
       (id, (dur, day))
-    })
+    }) // reuse subwayFile
 
     // 过滤掉出行片段时间超过3小时和小于0的数据
     // filteringData ==> (id, list(dur, day))
@@ -153,21 +127,21 @@ object AfcAndApContrast {
       .repartition(1)
       .sortByKey()
       .map(x => x._1.toString + "," + x._2.toString)
-    travelTimeLengthAP.saveAsTextFile(saveFilePath + "/AP-TimeLength")
+//    travelTimeLengthAP.saveAsTextFile(saveFilePath + "/AP-TimeLength")
 
     // 统计出行次数分布
     val travelNumAP = processingAP.map(x => (x._3, 1))
       .reduceByKey(_ + _)
       .repartition(1)
       .sortByKey()
-    travelNumAP.saveAsTextFile(saveFilePath + "/AP-Num")
+//    travelNumAP.saveAsTextFile(saveFilePath + "/AP-Num")
 
     // 统计出行天数分布
     val travelDaysAP = processingAP.map(x => (x._4, 1))
       .reduceByKey(_ + _)
       .repartition(1)
       .sortByKey()
-    travelDaysAP.saveAsTextFile(saveFilePath+ "/AP-Days")
+//    travelDaysAP.saveAsTextFile(saveFilePath+ "/AP-Days")
 
     //    val sumAFC = countDaysOfAFC.map(_._2).sum()
     //    val sumAP = countDaysOfAP.map(_._2).sum()

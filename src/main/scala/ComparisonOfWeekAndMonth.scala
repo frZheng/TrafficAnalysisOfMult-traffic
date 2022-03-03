@@ -27,8 +27,11 @@ object ComparisonOfWeekAndMonth {
         val stationNoToName = sc.broadcast(stationNoToNameRDD.collect().toMap)
 
 
+
         // 读取所有有效路径的数据
         //val validPathFile = sc.textFile(args(0) + "/liutao/AllInfo/allpath.txt").map(line => {
+        // 1 2 3 4 5 # 0 V 0.0000 12.6500 -> 1 2 3 4 5, 其中1为起始站点, 5为目的地
+        // 根据站点记录的得到((起始地, 目的地), 路径列表)
         val validPathFile = sc.textFile("D:\\subwayData\\spark\\data\\zlt-hdfs\\AllInfo\\allpath.txt").map(line => {
             // 仅保留站点编号信息
             val fields = line.split(' ').dropRight(5)
@@ -39,6 +42,8 @@ object ComparisonOfWeekAndMonth {
             fields.foreach(x => pathStations.append(stationNoToName.value(x.toInt)))
             ((sou, des), pathStations.toList)
         }).groupByKey().mapValues(_.toList).cache()
+
+
         // 共享为广播变量
         val perODMap = sc.broadcast(validPathFile.collect().toMap)
 
@@ -48,6 +53,7 @@ object ComparisonOfWeekAndMonth {
             v._2.foreach(path => temp_set.++=(path.toSet))
             (v._1, temp_set)
         })
+        println("validPathStationSetRDD", validPathStationSetRDD.first())
         val validPathStationSet = sc.broadcast(validPathStationSetRDD.collect().toMap)
 
         //    // 将OD之间的有效路径的站点编号转换为名称，OD-pair作为键
@@ -63,6 +69,7 @@ object ComparisonOfWeekAndMonth {
 
         // 读取最短路径的时间信息
         //val shortestPath = sc.textFile(args(0) + "/liutao/AllInfo/shortpath.txt").map(line => {
+        // 起始地 目的地 时间(分钟)
         val shortestPath = sc.textFile("D:\\subwayData\\spark\\data\\zlt-hdfs\\AllInfo\\shortpath.txt").map(line => {
             val fields = line.split(' ')
             val sou = stationNoToName.value(fields(0).toInt)
@@ -77,6 +84,7 @@ object ComparisonOfWeekAndMonth {
 
         // 读取乘客的OD记录
         //val personalOD = sc.textFile(args(1)).map(line => {
+        // (667979926,2019-06-04 08:42:22,坪洲,21,2019-06-04 08:55:23,宝安中心,22)
         val personalOD = sc.textFile("D:\\subwayData\\spark\\data\\Destination\\subway-pair\\part-00000").map(line => {
 
             val fields = line.split(',')
@@ -84,12 +92,13 @@ object ComparisonOfWeekAndMonth {
             val time = transTimeFormat(fields(1))
             val station = fields(2)
             //val tag = fields(3).dropRight(1)
-            val tag = fields(3)
-            val weeks = getWeek(time)
+            val tag = fields(3) // 上下车
+            val weeks = getWeek(time) //获得weekOfMonth
             ((pid, weeks), (time, station, tag))
         }).cache()
 
         // 挑选OD记录最多的部分smartcardID
+        // pid -> (pid, 1) -> (pid, n) -> 根据n排序
         val countRDD = personalOD.map(x => (x._1._1, 1)).reduceByKey(_ + _).sortBy(_._2, ascending = false)
 
         //    println("----------")
@@ -113,6 +122,7 @@ object ComparisonOfWeekAndMonth {
 
         // 读取mac数据
         //val macFile = sc.textFile(args(2)).map(line => {
+        // (000000000000,2019-06-01 01:32:44,大运,165)
         val macFile = sc.textFile("D:\\subwayData\\spark\\data\\zlt-hdfs\\UI\\NormalMacData\\part-00000").map(line => {
 
             val fields = line.split(',')
