@@ -329,9 +329,9 @@ object GeneralFunctionSets {
     /**
      * WGS84转GCJ02(火星坐标系)
      *
-     * @param param lng:WGS84坐标系的经度
+     * @param lng:WGS84坐标系的经度
      * @param lat:WGS84坐标系的纬度
-     * @return true 多边形包含这个点,false 多边形未包含这个点。
+     * @return  GCJ02坐标系的经度
      *
      */
     def wgs84togcj02(lng: Double,lat:Double): (Double,Double) ={
@@ -351,4 +351,29 @@ object GeneralFunctionSets {
         (lng * 2 - mglng, lat * 2 - mglat)
     }
 
+    /**
+     * gcj02转wgs84(GPS坐标系)
+     *
+     * @param lng:gcj02坐标系的经度
+     * @param lat:gcj02坐标系的纬度
+     * @return wgs84坐标经纬度
+     *
+     */
+    def gcj02towgs84(lng: Double,lat:Double): (Double,Double) = {
+
+        val pi = 3.14159265358979324
+        val ee = 0.00669342162296594323 // 扁率
+        val a = 6378245.0 // 长半轴
+        var dlat: Double = transformlat(lng - 105.0, lat - 35.0)
+        var dlng: Double = transformlng(lng - 105.0, lat - 35.0)
+        val radlat: Double = lat / 180.0 * pi
+        var magic: Double = math.sin(radlat)
+        magic = 1 - ee * magic * magic
+        val sqrtmagic: Double = math.sqrt(magic)
+        dlat = (dlat * 180.0) / ((a * (1 - ee)) / (magic * sqrtmagic) * pi)
+        dlng = (dlng * 180.0) / (a / sqrtmagic * math.cos(radlat) * pi)
+        val mglat: Double = lat + dlat
+        val mglng: Double = lng + dlng
+        (lng * 2 - mglng, lat * 2 - mglat)
+    }
 }
